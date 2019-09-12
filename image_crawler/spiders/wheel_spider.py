@@ -1,4 +1,5 @@
 import scrapy
+import os
 
 class WheelSpider(scrapy.Spider):
     name = 'wheelspider'
@@ -44,17 +45,19 @@ class WheelSpider(scrapy.Spider):
             display url: //file.maluzen.com/www/_upimages/200/01_011706_00_00_00000_%23_%23_000_00.jpg
             full-res url wiil be: https://www.maluzen.com/_upimages/photos/01_011706_00_00_00000_%23_%23_000_00.jpg
         '''
-        pass
+        basename = os.path.basename(disply_image_url)
+        return (WheelSpider.image_src_url_prefix + basename)
 
     def parse(self, reponse):
         print('Processing ', reponse.url)
         # Extract data using xpath
 
-        catalog_list = reponse.xpath('string(//*[@id="catalog-list"]/ul[1]/li[2]/a/img//@src)').extract()
+        catalog_list = reponse.xpath('string(//*[@id="catalog-list"]/ul/li/a/img//@src)').extract()
         print(catalog_list)
         for item in catalog_list:
             print(item)
+            link = self.rertrieve_image_link(item)
             # Extract link to image source to download
-            scrapped_info = {'link': item}
+            scrapped_info = {'link': link}
 
             yield scrapped_info
