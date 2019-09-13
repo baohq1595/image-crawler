@@ -1,42 +1,31 @@
 import scrapy
 import os
 
+from selenium import webdriver
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from webdriver_manager.chrome import ChromeDriverManager
+
+from .utils import *
+from image_crawler.items import ImageCrawlerItem
+
 class WheelSpider(scrapy.Spider):
     name = 'wheelspider'
     allowed_domains = ['maluzen.com']
-    start_urls = ['https://www.maluzen.com/wheelcatalog/?wd=4&wz=&wc=2&wb=&wm=&wma=&wyo=']
+    start_urls = generate_query_urls()
+    print('\n======List of urls to crawl from: ======\n')
+    print(start_urls, '\n')
 
     image_src_url_prefix = 'https://www.maluzen.com/_upimages/photos/'
 
-    shape_mapping = {1: 'other', 2: 'spoke', 3: 'dish', 4: 'mesh'}
-    color_mapping = {2: 'silver', 4: 'chrome', 6: 'gunmetal',
-                    7: 'gold', 8: 'white', 9: 'black',
-                    10: 'bronze', 11: 'polish', 12: 'titanium',
-                    13: 'pink', 14: 'yellow', 15: 'green',
-                    16: 'red', 17: 'blue', 1: 'other'}
-    color_marker = 'wc='
-    shape_marker = 'wd='
-
-    def get_image_attrs(self, url: str):
-        shape = 'other'
-        color = 'other'
-        shape_pos = url.find(WheelSpider.shape_marker)
-        color_pos = url.find(WheelSpider.color_marker)
-        if shape_pos != -1:
-            marked_pos = shape_pos + len(WheelSpider.shape_marker) 
-            shape = WheelSpider.shape_mapping.get(
-                int(url[marked_pos:marked_pos + 1]), 'other'
-            )
-        
-        if color_pos != -1:
-            marked_pos = color_pos + len(WheelSpider.color_marker)
-            color = WheelSpider.color_mapping.get(
-                int(url[marked_pos:marked_pos + 1]), 'other'
-            )
-
-        return shape, color
+    def __init__(self):
+        self.driver = webdriver.Chrome(ChromeDriverManager().install())
+        self.wait = WebDriverWait(self.driver, 100)
     
-    def rertrieve_image_link(self, disply_image_url: str):
+    def retrieve_image_link(self, disply_image_url: str):
         '''
         Form full-resolution (800x800) download-able link from display
         image url (which shown in the webpage)
@@ -48,16 +37,47 @@ class WheelSpider(scrapy.Spider):
         basename = os.path.basename(disply_image_url)
         return (WheelSpider.image_src_url_prefix + basename)
 
-    def parse(self, reponse):
-        print('Processing ', reponse.url)
+    def scroll_until_loaded(self):
+        check_height = self.driver.execute_script("return document.body.scrollHeight;")
+        while True:
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            try:
+                self.wait.until(lambda driver: self.driver.execute_script("return document.body.scrollHeight;")  > check_height)
+                check_height = self.driver.execute_script("return document.body.scrollHeight;") 
+            except TimeoutException:
+                break
+        # pass
+
+    def parse(self, response):
+        self.driver.get(response.url)
+        self.scroll_until_loaded()
+        print('Processing ', response.url)
+
         # Extract data using xpath
+        pages = int(float(response.xpath('count(//*[@id="catalog-list"]//ul[contains(@class, "page")])').extract()[0]))
+        img_src_list = response.xpath('//*[@id="catalog-list"]//ul//li//a//img//@src').extract()
+        img_name_list = response.xpath('//*[@id="catalog-list"]//ul//li//a//img//@alt').extract()
 
-        catalog_list = reponse.xpath('string(//*[@id="catalog-list"]/ul/li/a/img//@src)').extract()
-        print(catalog_list)
-        for item in catalog_list:
-            print(item)
-            link = self.rertrieve_image_link(item)
+        img_info = zip(img_src_list, img_name_list)
+
+        print('\n===============================\n')
+        print(len(img_src_list))
+        print('\n===============================\n')
+
+        for src, name in img_info:
+            item = ImageCrawlerItem()
+            link = self.retrieve_image_link(src)
+   
             # Extract link to image source to download
-            scrapped_info = {'link': link}
+            item['url'] = response.url
+            item['img_link'] = link
+            item['img_name'] = name
 
-            yield scrapped_info
+            yield item
+
+        for i in range(pages - 1):
+            n_url = 'https://www.maluzen.com/wheelcatalog/?pg={}&wd=4&wz=&wc=2&wb=&wm=&wma=&wyo='.format(i + 2)
+            yield scrapy.http.Request(
+                url=n_url,
+                callback=self.parse
+            )
